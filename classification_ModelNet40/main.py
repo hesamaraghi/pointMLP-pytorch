@@ -15,7 +15,7 @@ import torch.utils.data.distributed
 from torch.utils.data import DataLoader
 import models as models
 from utils import Logger, mkdir_p, progress_bar, save_model, save_args, cal_loss
-from data import ModelNet40
+from data import ModelNet40, UniformSampling, GradientSampling, SplitSampling, label_to_category_name
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import sklearn.metrics as metrics
 import numpy as np
@@ -36,6 +36,12 @@ def parse_args():
     parser.add_argument('--weight_decay', type=float, default=2e-4, help='decay rate')
     parser.add_argument('--seed', type=int, help='random seed')
     parser.add_argument('--workers', default=8, type=int, help='workers')
+    parser.add_argument('--ptDropOut', default=1.0, type=float, help='Point drop out (default: 1.0)')
+    parser.add_argument('--sampling', type=str, default='uniform', help='sampling method')
+    parser.add_argument('--select_first', action='store_true', help='select first points for uniform sampling (default: False)')
+    parser.add_argument('--receptive_field', type=str, default='knn', help='receptive field generation method, options: knn, radius. default: knn')
+    parser.add_argument('--radii', type=float, nargs='+', default=[0.15, 2.25, 0.3375, 0.51], help='radii for receptive field generation')
+    parser.add_argument('--max_nsample', type=int, default=32, help='max number of points in each local region')
     return parser.parse_args()
 
 
@@ -53,15 +59,39 @@ def main():
         torch.cuda.manual_seed_all(args.seed)
         torch.cuda.manual_seed(args.seed)
         torch.set_printoptions(10)
-        torch.backends.cudnn.benchmark = False
-        torch.backends.cudnn.deterministic = True
+        # torch.backends.cudnn.benchmark = False
+        # torch.backends.cudnn.deterministic = True
         os.environ['PYTHONHASHSEED'] = str(args.seed)
     time_str = str(datetime.datetime.now().strftime('-%Y%m%d%H%M%S'))
     if args.msg is None:
         message = time_str
     else:
         message = "-" + args.msg
-    args.checkpoint = 'checkpoints/' + args.model + message + '-' + str(args.seed)
+    if args.sampling == 'uniform':
+        transform = UniformSampling(
+                num_points = args.num_points, 
+                dropout_rate = args.ptDropOut, 
+                select_first = args.select_first, 
+                seed = args.seed
+        )
+    elif args.sampling == 'gradient':
+        transform = GradientSampling(
+                num_points = args.num_points, 
+                seed = args.seed
+        )
+    elif args.sampling == 'split':
+        transform = SplitSampling(
+                num_points = args.num_points, 
+                seed = args.seed
+        )
+    elif args.sampling == 'none':
+        transform = None
+    else:
+        raise ValueError(f"Unknown sampling method: {args.sampling}. The available methods are: "
+                            f"uniform, gradient, split, none.")
+        
+        
+    args.checkpoint = 'checkpoints/' + args.model + '-' + args.sampling + '-' + args.receptive_field + '-' + message + '-' + str(args.seed)
     if not os.path.isdir(args.checkpoint):
         mkdir_p(args.checkpoint)
 
@@ -80,7 +110,7 @@ def main():
     # Model
     printf(f"args: {args}")
     printf('==> Building model..')
-    net = models.__dict__[args.model]()
+    net = models.__dict__[args.model](receptive_field=args.receptive_field, radii=args.radii, max_nsample=args.max_nsample)
     criterion = cal_loss
     net = net.to(device)
     # criterion = criterion.to(device)
@@ -119,9 +149,9 @@ def main():
         optimizer_dict = checkpoint['optimizer']
 
     printf('==> Preparing data..')
-    train_loader = DataLoader(ModelNet40(partition='train', num_points=args.num_points), num_workers=args.workers,
+    train_loader = DataLoader(ModelNet40(partition='train', transform=transform), num_workers=args.workers,
                               batch_size=args.batch_size, shuffle=True, drop_last=True)
-    test_loader = DataLoader(ModelNet40(partition='test', num_points=args.num_points), num_workers=args.workers,
+    test_loader = DataLoader(ModelNet40(partition='test', transform=transform), num_workers=args.workers,
                              batch_size=args.batch_size // 2, shuffle=False, drop_last=False)
 
     optimizer = torch.optim.SGD(net.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=args.weight_decay)
