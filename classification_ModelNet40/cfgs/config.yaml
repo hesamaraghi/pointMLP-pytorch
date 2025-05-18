@@ -1,5 +1,3 @@
-# config.yaml
-msg: "demo_run"
 model: "pointMLPElite"
 batch_size: 32
 epoch: 300
@@ -7,12 +5,8 @@ num_points: 1024
 learning_rate: 0.1
 min_lr: 0.005
 weight_decay: 0.0002
-seed: 42
 workers: 8
 ptDropOut: 1.0
-sampling: "uniform"
-select_first: False
-receptive_field: "knn"
 radii: [0.15, 2.25, 0.3375, 0.51]
-max_nsample: 32
-checkpoint: ""
+max_nsample: 64
+# msg, seed, receptive_field, sampling are overridden by run_training.py
