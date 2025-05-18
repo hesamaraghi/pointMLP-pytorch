@@ -9,6 +9,7 @@ dependencies = [
   "einops>=0.8.1",
   "h5py>=3.13.0",
   "matplotlib>=3.10.1",
+  "open3d>=0.19.0",
   "scikit-learn>=1.6.1",
   "scipy>=1.15.2",
   "torch>=2.7.0",
