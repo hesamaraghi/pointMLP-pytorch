@@ -137,6 +137,28 @@ class LocalGrouper(nn.Module):
         """
         super(LocalGrouper, self).__init__()
         self.groups = groups
+        if "receptive_field" in kwargs:
+            self.receptive_field = kwargs["receptive_field"]
+        else:
+            self.receptive_field = "knn"
+        if self.receptive_field not in ["knn", "radius"]:
+            raise ValueError(f"Unrecognized receptive field type: {self.receptive_field}. "
+                             f"Please choose from ['knn', 'radius']")
+        if self.receptive_field == "radius":
+            if "radius" not in kwargs:
+                raise ValueError("Please provide the radius for the radius receptive field.")
+            self.radius = kwargs["radius"]
+            assert isinstance(self.radius, float), \
+                f"Please check the type of radius: {type(self.radius)}."
+            assert self.radius > 0, f"Please check the value of radius: {self.radius}."
+            if "max_nsample" in kwargs:
+                self.max_nsample = kwargs["max_nsample"]
+            else:
+                self.max_nsample = 64
+                print(f"max_nsample is not provided, set to default value: {self.max_nsample}.")
+            assert isinstance(self.max_nsample, int), \
+                f"Please check the type of max_nsample: {type(self.max_nsample)}."
+            assert self.max_nsample > 0, f"Please check the value of max_nsample: {self.max_nsample}."
         self.kneighbors = kneighbors
         self.use_xyz = use_xyz
         if normalize is not None:
@@ -162,8 +184,15 @@ class LocalGrouper(nn.Module):
         new_xyz = index_points(xyz, fps_idx)  # [B, npoint, 3]
         new_points = index_points(points, fps_idx)  # [B, npoint, d]
 
-        idx = knn_point(self.kneighbors, xyz, new_xyz)
-        # idx = query_ball_point(radius, nsample, xyz, new_xyz)
+        if self.receptive_field == "knn":
+            idx = knn_point(self.kneighbors, xyz, new_xyz)
+        elif self.receptive_field == "radius":
+            idx = query_ball_point(self.radius, self.max_nsample, xyz, new_xyz)
+            self.kneighbors = idx.shape[-1]
+        else:  
+            raise ValueError(f"Unrecognized receptive field type: {self.receptive_field}. "
+                             f"Please choose from ['knn', 'radius']")
+            
         grouped_xyz = index_points(xyz, idx)  # [B, npoint, k, 3]
         grouped_points = index_points(points, idx)  # [B, npoint, k, d]
         if self.use_xyz:
@@ -287,6 +316,33 @@ class Model(nn.Module):
         self.class_num = class_num
         self.points = points
         self.embedding = ConvBNReLU1D(3, embed_dim, bias=bias, activation=activation)
+        # check if the receptive field type in the inputs
+        if "receptive_field" in kwargs:
+            self.receptive_field = kwargs["receptive_field"]
+        else:
+            self.receptive_field = "knn"
+        if self.receptive_field not in ["knn", "radius"]:
+            raise ValueError(f"Unrecognized receptive field type: {self.receptive_field}. "
+                             f"Please choose from ['knn', 'radius']")
+        if self.receptive_field == "radius":
+            if "radii" not in kwargs:
+                raise ValueError("Please provide the radii for the radius receptive field of each stage.")
+            self.radii = kwargs["radii"]
+            assert len(self.radii) == self.stages, \
+                f"Please check the length of radii: {len(self.radii)} and stages: {self.stages}."
+            if 'max_nsample' in kwargs:
+                self.max_nsample = kwargs["max_nsample"]
+                if not isinstance(self.max_nsample, list):
+                    self.max_nsample = [self.max_nsample] * self.stages
+                assert len(self.max_nsample) == self.stages, \
+                    f"Please check the length of max_nsample: {len(self.max_nsample)} and stages: {self.stages}."
+                for i in range(self.stages):
+                    assert isinstance(self.max_nsample[i], int), \
+                        f"Please check the type of max_nsample: {type(self.max_nsample[i])}."
+                    assert self.max_nsample[i] > 0, f"Please check the value of max_nsample: {self.max_nsample[i]}."
+            else:
+                self.max_nsample = [64] * self.stages
+                print(f"max_nsample is not provided, set to default value: {self.max_nsample}.")
         assert len(pre_blocks) == len(k_neighbors) == len(reducers) == len(pos_blocks) == len(dim_expansion), \
             "Please check stage number consistent for pre_blocks, pos_blocks k_neighbors, reducers."
         self.local_grouper_list = nn.ModuleList()
@@ -299,10 +355,16 @@ class Model(nn.Module):
             pre_block_num = pre_blocks[i]
             pos_block_num = pos_blocks[i]
             kneighbor = k_neighbors[i]
+            if self.receptive_field == "radius":
+                radius = self.radii[i]
+                max_nsample = self.max_nsample[i]
+            else:
+                radius = None
+                max_nsample = None
             reduce = reducers[i]
             anchor_points = anchor_points // reduce
             # append local_grouper_list
-            local_grouper = LocalGrouper(last_channel, anchor_points, kneighbor, use_xyz, normalize)  # [b,g,k,d]
+            local_grouper = LocalGrouper(last_channel, anchor_points, kneighbor, use_xyz, normalize, receptive_field = self.receptive_field, radius = radius, max_nsample = max_nsample)  # [b,g,k,d]
             self.local_grouper_list.append(local_grouper)
             # append pre_block_list
             pre_block_module = PreExtraction(last_channel, out_channel, pre_block_num, groups=groups,
@@ -361,8 +423,17 @@ def pointMLPElite(num_classes=40, **kwargs) -> Model:
 
 if __name__ == '__main__':
     data = torch.rand(2, 3, 1024)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("===> testing pointMLP ...")
-    model = pointMLP()
+    # send the data to the device
+    data = data.to(device)
+    # model = pointMLP()
+    model = pointMLPElite(receptive_field="radius", radii=[0.15, 2.25, 0.3375, 0.51], max_nsample=64)
+    # send the model to the device
+    model = model.to(device)
+    # set the model to evaluation mode
+    model.eval()
+    # forward pass
     out = model(data)
     print(out.shape)
 
