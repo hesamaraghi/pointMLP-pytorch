@@ -133,3 +133,5 @@ classification_ModelNet40/checkpoints/
 classification_ModelNet40/data/
 classification_ModelNet40/wandb/
 
+sbatch_folder
+slurm_output
