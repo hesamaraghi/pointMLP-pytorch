@@ -19,6 +19,7 @@ from data import ModelNet40, UniformSampling, GradientSampling, SplitSampling, l
 from torch.optim.lr_scheduler import CosineAnnealingLR
 import sklearn.metrics as metrics
 import numpy as np
+import wandb
 
 
 def parse_args():
@@ -107,6 +108,10 @@ def main():
         screen_logger.info(str)
         print(str)
 
+    # Initialize WandB
+    wandb.init(project="ModelNet40-Classification", name=f"{args.model}_{args.sampling}_{args.receptive_field}_{args.seed}_{args.msg or 'run'}")
+    wandb.config.update(vars(args))
+
     # Model
     printf(f"args: {args}")
     printf('==> Building model..')
@@ -164,6 +169,20 @@ def main():
         train_out = train(net, train_loader, optimizer, criterion, device)  # {"loss", "acc", "acc_avg", "time"}
         test_out = validate(net, test_loader, criterion, device)
         scheduler.step()
+        
+        # Log metrics to WandB
+        wandb.log({
+            "epoch": epoch + 1,
+            "train_loss": train_out["loss"],
+            "train_acc": train_out["acc"],
+            "train_acc_avg": train_out["acc_avg"],
+            "test_loss": test_out["loss"],
+            "test_acc": test_out["acc"],
+            "test_acc_avg": test_out["acc_avg"],
+            "lr": optimizer.param_groups[0]['lr'],
+            "train_time": train_out["time"],
+            "test_time": test_out["time"],
+        })
 
         if test_out["acc"] > best_test_acc:
             best_test_acc = test_out["acc"]
@@ -204,7 +223,14 @@ def main():
     printf(f"++  Best Train acc_B: {best_train_acc_avg} | Best Test acc_B: {best_test_acc_avg}  ++")
     printf(f"++  Best Train acc: {best_train_acc} | Best Test acc: {best_test_acc}  ++")
     printf(f"++++++++" * 5)
-
+ 
+    wandb.summary["best_test_acc"] = best_test_acc
+    wandb.summary["best_train_acc"] = best_train_acc
+    wandb.summary["best_test_loss"] = best_test_loss
+    wandb.summary["best_train_loss"] = best_train_loss
+   
+    # Finish WandB run
+    wandb.finish()
 
 def train(net, trainloader, optimizer, criterion, device):
     net.train()

@@ -131,4 +131,5 @@ dmypy.json
 
 classification_ModelNet40/checkpoints/
 classification_ModelNet40/data/
+classification_ModelNet40/wandb/
 
