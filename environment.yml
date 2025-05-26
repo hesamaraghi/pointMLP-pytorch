@@ -1,6 +1,6 @@
 name: pointmlp                          
 channels:
-  - pytorch
+  - pytorchsdfdsfs
   - nvidia
   - conda-forge 
 dependencies:
